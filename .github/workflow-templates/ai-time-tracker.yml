@@ -28,11 +28,11 @@ jobs:
           
           echo "Analyzing changes from $BASE_SHA to $HEAD_SHA"
           
-          # Get diff stats
-          CHANGES=$(git diff --numstat $BASE_SHA..$HEAD_SHA || echo "")
+          # Get diff stats (excluding files in *dist* folders)
+          CHANGES=$(git diff --numstat $BASE_SHA..$HEAD_SHA | grep -v '/dist/' | grep -v '^[^/]*dist/' || echo "")
           
           if [ -z "$CHANGES" ]; then
-            echo "No changes found"
+            echo "No changes found (excluding dist folders)"
             TOTAL_LINES_ADDED=0
             TOTAL_LINES_DELETED=0
             FILES_CHANGED=0
@@ -42,10 +42,10 @@ jobs:
             FILES_CHANGED=$(echo "$CHANGES" | grep -v "^$" | wc -l)
           fi
           
-          # Get changed file names and types
-          CHANGED_FILES=$(git diff --name-only $BASE_SHA..$HEAD_SHA || echo "")
+          # Get changed file names and types (excluding files in *dist* folders)
+          CHANGED_FILES=$(git diff --name-only $BASE_SHA..$HEAD_SHA | grep -v '/dist/' | grep -v '^[^/]*dist/' || echo "")
           
-          echo "Analysis results:"
+          echo "Analysis results (excluding dist folders):"
           echo "- Lines added: $TOTAL_LINES_ADDED"
           echo "- Lines deleted: $TOTAL_LINES_DELETED"
           echo "- Files changed: $FILES_CHANGED"
