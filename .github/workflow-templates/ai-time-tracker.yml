@@ -146,7 +146,7 @@ jobs:
               "hours": "$HOURS",
               "minutes": "0",
               "description": "$DESCRIPTION",
-              "person-id": "0",
+              "person-id": "607289",
               "isbillable": true,
               "tags": "AI,GitHub,Automated"
             }
