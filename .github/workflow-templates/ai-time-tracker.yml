@@ -1,0 +1,238 @@
+name: AI Time Tracking to Teamwork
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  log-time-to-teamwork:
+    # Only run when PR is merged and has "AI" label
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'AI')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR changes
+        id: get-changes
+        run: |
+          # Get the list of changed files and their stats
+          echo "Getting changes for PR #${{ github.event.pull_request.number }}"
+          
+          # Get base and head commits
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          
+          echo "Analyzing changes from $BASE_SHA to $HEAD_SHA"
+          
+          # Get diff stats
+          CHANGES=$(git diff --numstat $BASE_SHA..$HEAD_SHA || echo "")
+          
+          if [ -z "$CHANGES" ]; then
+            echo "No changes found"
+            TOTAL_LINES_ADDED=0
+            TOTAL_LINES_DELETED=0
+            FILES_CHANGED=0
+          else
+            TOTAL_LINES_ADDED=$(echo "$CHANGES" | awk '{sum += $1} END {print sum+0}')
+            TOTAL_LINES_DELETED=$(echo "$CHANGES" | awk '{sum += $2} END {print sum+0}')
+            FILES_CHANGED=$(echo "$CHANGES" | grep -v "^$" | wc -l)
+          fi
+          
+          # Get changed file names and types
+          CHANGED_FILES=$(git diff --name-only $BASE_SHA..$HEAD_SHA || echo "")
+          
+          echo "Analysis results:"
+          echo "- Lines added: $TOTAL_LINES_ADDED"
+          echo "- Lines deleted: $TOTAL_LINES_DELETED"
+          echo "- Files changed: $FILES_CHANGED"
+          
+          echo "lines_added=$TOTAL_LINES_ADDED" >> $GITHUB_OUTPUT
+          echo "lines_deleted=$TOTAL_LINES_DELETED" >> $GITHUB_OUTPUT
+          echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc
+
+      - name: Estimate development time
+        id: estimate-time
+        run: |
+          # Simulate AI-powered time estimation based on code changes
+          LINES_ADDED=${{ steps.get-changes.outputs.lines_added }}
+          LINES_DELETED=${{ steps.get-changes.outputs.lines_deleted }}
+          FILES_CHANGED=${{ steps.get-changes.outputs.files_changed }}
+          
+          # Handle empty values (default to 0)
+          LINES_ADDED=${LINES_ADDED:-0}
+          LINES_DELETED=${LINES_DELETED:-0}
+          FILES_CHANGED=${FILES_CHANGED:-0}
+          
+          echo "Analyzing code changes:"
+          echo "- Lines added: $LINES_ADDED"
+          echo "- Lines deleted: $LINES_DELETED"
+          echo "- Files changed: $FILES_CHANGED"
+          
+          # Basic estimation algorithm (can be enhanced with AI)
+          # Base time: 15 minutes per file
+          BASE_TIME=$(($FILES_CHANGED * 15))
+          
+          # Additional time based on lines of code
+          # 1 minute per 10 lines added
+          LINES_TIME=$(($LINES_ADDED / 10))
+          
+          # Additional complexity for deletions (refactoring)
+          DELETION_TIME=$(($LINES_DELETED / 20))
+          
+          # Calculate total time in minutes
+          TOTAL_MINUTES=$(($BASE_TIME + $LINES_TIME + $DELETION_TIME))
+          
+          # Minimum 30 minutes, maximum 8 hours (480 minutes)
+          if [ $TOTAL_MINUTES -lt 30 ]; then
+            TOTAL_MINUTES=30
+          elif [ $TOTAL_MINUTES -gt 480 ]; then
+            TOTAL_MINUTES=480
+          fi
+          
+          # Convert to hours and minutes for Teamwork (decimal hours)
+          HOURS_DECIMAL=$(echo "scale=2; $TOTAL_MINUTES / 60" | bc)
+          
+          echo "Estimated time: $TOTAL_MINUTES minutes ($HOURS_DECIMAL hours)"
+          echo "time_minutes=$TOTAL_MINUTES" >> $GITHUB_OUTPUT
+          echo "time_hours=$HOURS_DECIMAL" >> $GITHUB_OUTPUT
+
+      - name: Log time to Teamwork
+        env:
+          TEAMWORK_API_TOKEN: ${{ secrets.TEAMWORK_API_TOKEN }}
+          TEAMWORK_SITE_URL: ${{ secrets.TEAMWORK_SITE_URL }}
+          TEAMWORK_PROJECT_ID: ${{ secrets.TEAMWORK_PROJECT_ID }}
+        run: |
+          # Validate required environment variables
+          if [ -z "$TEAMWORK_API_TOKEN" ]; then
+            echo "❌ Error: TEAMWORK_API_TOKEN secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "$TEAMWORK_SITE_URL" ]; then
+            echo "❌ Error: TEAMWORK_SITE_URL secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "$TEAMWORK_PROJECT_ID" ]; then
+            echo "❌ Error: TEAMWORK_PROJECT_ID secret is not set"
+            exit 1
+          fi
+          
+          # Prepare the time entry data
+          HOURS="${{ steps.estimate-time.outputs.time_hours }}"
+          DESCRIPTION="AI-assisted development work for PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+          DATE=$(date +"%Y-%m-%d")
+          
+          # Sanitize description (remove quotes and special characters)
+          DESCRIPTION=$(echo "$DESCRIPTION" | sed 's/"/\\"/g' | tr -d '\n\r')
+          
+          # Create JSON payload for Teamwork API
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "time": {
+              "date": "$DATE",
+              "hours": "$HOURS",
+              "minutes": "0",
+              "description": "$DESCRIPTION",
+              "person-id": "0",
+              "isbillable": true,
+              "tags": "AI,GitHub,Automated"
+            }
+          }
+          EOF
+          )
+          
+          echo "Logging $HOURS hours to Teamwork project $TEAMWORK_PROJECT_ID"
+          echo "Description: $DESCRIPTION"
+          echo "Date: $DATE"
+          
+          # Make API call to Teamwork
+          TEMP_FILE=$(mktemp)
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $TEAMWORK_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" \
+            -o "$TEMP_FILE" \
+            "$TEAMWORK_SITE_URL/projects/api/v3/projects/$TEAMWORK_PROJECT_ID/time.json")
+          
+          RESPONSE_BODY=$(cat "$TEMP_FILE")
+          rm "$TEMP_FILE"
+          
+          echo "HTTP Response Code: $HTTP_CODE"
+          echo "Response Body: $RESPONSE_BODY"
+          
+          if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Successfully logged time entry to Teamwork"
+            
+            # Try to extract the time entry ID from response
+            TIME_ENTRY_ID=$(echo "$RESPONSE_BODY" | grep -o '"id":[0-9]*' | head -1 | cut -d':' -f2 || echo "unknown")
+            echo "Time entry ID: $TIME_ENTRY_ID"
+            echo "time_entry_id=$TIME_ENTRY_ID" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to log time entry to Teamwork"
+            echo "This might be due to:"
+            echo "- Invalid API token"
+            echo "- Incorrect project ID"
+            echo "- Insufficient permissions"
+            echo "- Invalid API URL"
+            exit 1
+          fi
+
+      - name: Add comment to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const timeHours = '${{ steps.estimate-time.outputs.time_hours }}';
+            const timeMinutes = '${{ steps.estimate-time.outputs.time_minutes }}';
+            const linesAdded = '${{ steps.get-changes.outputs.lines_added }}';
+            const linesDeleted = '${{ steps.get-changes.outputs.lines_deleted }}';
+            const filesChanged = '${{ steps.get-changes.outputs.files_changed }}';
+            const success = '${{ job.status }}' === 'success';
+            const projectId = '${{ secrets.TEAMWORK_PROJECT_ID }}';
+            
+            let comment;
+            if (success) {
+              comment = `🕒 **AI Time Tracking - Successfully Logged**
+              
+              ✅ **${timeHours} hours** (${timeMinutes} minutes) have been automatically logged to Teamwork project \`${projectId}\`.
+              
+              **Analysis Summary:**
+              - 📁 Files changed: ${filesChanged}
+              - ➕ Lines added: ${linesAdded}
+              - ➖ Lines deleted: ${linesDeleted}
+              
+              *Time estimate based on AI-assisted development complexity analysis.*`;
+            } else {
+              comment = `⚠️ **AI Time Tracking - Failed**
+              
+              ❌ There was an issue logging time to Teamwork. Please check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+              
+              **Estimated Time:** ${timeHours} hours (${timeMinutes} minutes)
+              **Analysis Summary:**
+              - 📁 Files changed: ${filesChanged}
+              - ➕ Lines added: ${linesAdded}
+              - ➖ Lines deleted: ${linesDeleted}
+              
+              Please manually log this time entry to Teamwork project \`${projectId}\`.`;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
