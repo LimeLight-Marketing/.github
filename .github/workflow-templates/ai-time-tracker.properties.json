@@ -1,0 +1,14 @@
+{
+    "name": "AI Time Tracking to Teamwork",
+    "description": "Automatically log development time to Teamwork when PRs with 'AI' label are merged. Estimates time based on code changes and creates time entries via Teamwork API.",
+    "iconName": "clock",
+    "categories": [
+        "Automation",
+        "Project Management",
+        "Time Tracking"
+    ],
+    "filePatterns": [
+        "package.json",
+        "*.md"
+    ]
+}
