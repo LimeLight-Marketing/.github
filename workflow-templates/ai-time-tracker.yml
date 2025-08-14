@@ -3,11 +3,13 @@ name: AI Time Tracking to Teamwork
 on:
   pull_request:
     types: [closed]
+    branches:
+      - main
 
 jobs:
   log-time-to-teamwork:
-    # Only run when PR is merged and has "AI" label
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'AI')
+    # Only run when PR is merged
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     
     steps:
@@ -60,7 +62,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc
+          sudo apt-get install -y bc jq
 
       - name: Estimate development time
         id: estimate-time
@@ -101,7 +103,7 @@ jobs:
             TOTAL_MINUTES=480
           fi
           
-          # Convert to hours and minutes for Teamwork (decimal hours)
+          # Convert to hours for display
           HOURS_DECIMAL=$(echo "scale=2; $TOTAL_MINUTES / 60" | bc)
           
           echo "Estimated time: $TOTAL_MINUTES minutes ($HOURS_DECIMAL hours)"
@@ -110,13 +112,13 @@ jobs:
 
       - name: Log time to Teamwork
         env:
-          TEAMWORK_API_TOKEN: ${{ secrets.TEAMWORK_API_TOKEN }}
+          TEAMWORK_API_KEY: ${{ secrets.TEAMWORK_API_TOKEN }}
           TEAMWORK_SITE_URL: ${{ secrets.TEAMWORK_SITE_URL }}
           TEAMWORK_PROJECT_ID: ${{ secrets.TEAMWORK_PROJECT_ID }}
         run: |
           # Validate required environment variables
-          if [ -z "$TEAMWORK_API_TOKEN" ]; then
-            echo "❌ Error: TEAMWORK_API_TOKEN secret is not set"
+          if [ -z "$TEAMWORK_API_KEY" ]; then
+            echo "❌ Error: TEAMWORK_API_KEY secret is not set"
             exit 1
           fi
           
@@ -131,39 +133,56 @@ jobs:
           fi
           
           # Prepare the time entry data
-          HOURS="${{ steps.estimate-time.outputs.time_hours }}"
+          TOTAL_MINUTES="${{ steps.estimate-time.outputs.time_minutes }}"
+          DISPLAY_HOURS="${{ steps.estimate-time.outputs.time_hours }}"
           DESCRIPTION="AI-assisted development work for PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
           DATE=$(date +"%Y-%m-%d")
           
           # Sanitize description (remove quotes and special characters)
           DESCRIPTION=$(echo "$DESCRIPTION" | sed 's/"/\\"/g' | tr -d '\n\r')
           
-          # Create JSON payload for Teamwork API
-          JSON_PAYLOAD=$(cat <<EOF
-          {
-            "time": {
-              "date": "$DATE",
-              "hours": "$HOURS",
-              "minutes": "0",
-              "description": "$DESCRIPTION",
-              "person-id": "607289",
-              "isbillable": true,
-              "tags": "AI,GitHub,Automated"
-            }
-          }
-          EOF
-          )
+          # Create base64 encoded auth string (API_KEY:)
+          AUTH_STRING=$(echo -n "$TEAMWORK_API_KEY:" | base64)
           
-          echo "Logging $HOURS hours to Teamwork project $TEAMWORK_PROJECT_ID"
+          # Create JSON payload for Teamwork API using jq for proper JSON formatting
+          JSON_PAYLOAD=$(jq -n \
+            --arg date "$DATE" \
+            --arg description "$DESCRIPTION" \
+            --arg minutes "$TOTAL_MINUTES" \
+            --arg projectId "$TEAMWORK_PROJECT_ID" \
+            '{
+              "tags": [],
+              "timelog": {
+                "date": $date,
+                "description": $description,
+                "hasStartTime": false,
+                "minutes": ($minutes | tonumber),
+                "isBillable": true,
+                "isUtc": false,
+                "projectId": ($projectId | tonumber),
+                "tagIds": [],
+                "userId": 607289
+              },
+              "timelogOptions": {
+                "fireWebhook": false,
+                "logActivity": false,
+                "markTaskComplete": false,
+                "parseInlineTags": false,
+                "useNotifyViaTWIM": false
+              }
+            }')
+          
+          echo "Logging $TOTAL_MINUTES minutes ($DISPLAY_HOURS hours) to Teamwork project $TEAMWORK_PROJECT_ID"
           echo "Description: $DESCRIPTION"
           echo "Date: $DATE"
           
-          # Make API call to Teamwork
+          # Make API call to Teamwork using Basic authentication
           TEMP_FILE=$(mktemp)
           HTTP_CODE=$(curl -s -w "%{http_code}" \
             -X POST \
-            -H "Authorization: Bearer $TEAMWORK_API_TOKEN" \
+            -H "Authorization: Basic $AUTH_STRING" \
             -H "Content-Type: application/json" \
+            -H "access-control-expose-headers: id,x-page" \
             -d "$JSON_PAYLOAD" \
             -o "$TEMP_FILE" \
             "$TEAMWORK_SITE_URL/projects/api/v3/projects/$TEAMWORK_PROJECT_ID/time.json")
@@ -184,7 +203,7 @@ jobs:
           else
             echo "❌ Failed to log time entry to Teamwork"
             echo "This might be due to:"
-            echo "- Invalid API token"
+            echo "- Invalid API key"
             echo "- Incorrect project ID"
             echo "- Insufficient permissions"
             echo "- Invalid API URL"
