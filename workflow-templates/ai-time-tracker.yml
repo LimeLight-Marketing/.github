@@ -4,12 +4,12 @@ on:
   pull_request:
     types: [closed]
     branches:
-      - main
+      - dev
 
 jobs:
   log-time-to-teamwork:
-    # Only run when PR is merged
-    if: github.event.pull_request.merged == true
+    # Only run when PR is merged AND has "AI" label
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'AI')
     runs-on: ubuntu-latest
     
     steps:
