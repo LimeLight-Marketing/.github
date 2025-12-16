@@ -1,0 +1,14 @@
+{
+    "name": "Teamwork PR Tracking",
+    "description": "Automatically pushes comments to teamwork tasks on PRs.",
+    "iconName": "clock",
+    "categories": [
+        "Automation",
+        "Project Management",
+        "Time Tracking"
+    ],
+    "filePatterns": [
+        "package.json",
+        "*.md"
+    ]
+}
