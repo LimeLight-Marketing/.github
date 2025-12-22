@@ -16,4 +16,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TEAMWORK_URI: ${{ secrets.TEAMWORK_SITE_URL }}
           TEAMWORK_API_TOKEN: ${{ secrets.TEAMWORK_API_TOKEN }}
-          AUTOMATIC_TAGGING: true"
+          AUTOMATIC_TAGGING: true
